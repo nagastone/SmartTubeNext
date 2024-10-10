@@ -24,7 +24,7 @@ import com.liskovsoft.smartyoutubetv2.common.utils.Utils;
 public class VideoStateController extends BasePlayerController {
     private static final String TAG = VideoStateController.class.getSimpleName();
     private static final long MUSIC_VIDEO_MAX_DURATION_MS = 6 * 60 * 1000;
-    private static final long LIVE_THRESHOLD_MS = 90_000; // should be greater than the live buffer
+    private static final long LIVE_SPEED_THRESHOLD_MS = 90_000; // should be greater than the live buffer
     private static final long DEFAULT_LIVE_BUFFER_MS = 60_000; // Minimum issues
     private static final long OFFICIAL_LIVE_BUFFER_MS = 15_000; // Official app buffer
     private static final long LIVE_BUFFER_MS = OFFICIAL_LIVE_BUFFER_MS;
@@ -65,6 +65,7 @@ public class VideoStateController extends BasePlayerController {
                 mTickleLeft = 0;
                 // Save state of the previous video.
                 // In case video opened from phone and other stuff.
+                removeFromHistoryIfNeeded();
                 saveState();
             }
         }
@@ -96,9 +97,8 @@ public class VideoStateController extends BasePlayerController {
     @Override
     public boolean onNextClicked() {
         // Seek to the actual live position on next
-        if (getVideo() != null && getVideo().isLive && (getPlayer().getDurationMs() - getPlayer().getPositionMs() > LIVE_THRESHOLD_MS)) {
-            long buffer = mPlayerTweaksData.isBufferOnStreamsDisabled() ? SHORT_LIVE_BUFFER_MS : LIVE_BUFFER_MS;
-            getPlayer().setPositionMs(getPlayer().getDurationMs() - buffer);
+        if (getVideo() != null && getVideo().isLive && (getPlayer().getDurationMs() - getPlayer().getPositionMs() > getLiveThreshold())) {
+            getPlayer().setPositionMs(getPlayer().getDurationMs() - getLiveBuffer());
             return true;
         }
 
@@ -313,6 +313,7 @@ public class VideoStateController extends BasePlayerController {
     @Override
     public void onFinish() {
         mIncognito = false;
+        removeFromHistoryIfNeeded();
     }
 
     private void clearStateOfNextVideo() {
@@ -459,10 +460,9 @@ public class VideoStateController extends BasePlayerController {
         }
 
         // Set actual position for live videos with uncommon length
-        if ((state == null || state.durationMs - state.positionMs < LIVE_THRESHOLD_MS) && item.isLive) {
+        if ((state == null || state.durationMs - state.positionMs < getLiveThreshold()) && item.isLive) {
             // Add buffer. Should I take into account segment offset???
-            long buffer = mPlayerTweaksData.isBufferOnStreamsDisabled() ? SHORT_LIVE_BUFFER_MS : LIVE_BUFFER_MS;
-            state = new State(item, getPlayer().getDurationMs() - buffer);
+            state = new State(item, getPlayer().getDurationMs() - getLiveBuffer());
         }
 
         // Do I need to check that item isn't live? (state != null && !item.isLive)
@@ -505,7 +505,7 @@ public class VideoStateController extends BasePlayerController {
     private void restoreSpeed() {
         Video item = getVideo();
 
-        if (isLiveThreshold() || isMusicVideo()) {
+        if (isLiveSpeedThreshold() || isMusicVideo()) {
             getPlayer().setSpeed(1.0f);
         } else {
             State state = mStateService.getByVideoId(item.videoId);
@@ -579,16 +579,6 @@ public class VideoStateController extends BasePlayerController {
         return mVideo;
     }
 
-    private boolean isLiveThreshold() {
-        if (getPlayer() == null) {
-            return false;
-        }
-
-        Video item = getVideo();
-        boolean isLiveThreshold = getPlayer().getDurationMs() - getPlayer().getPositionMs() < LIVE_THRESHOLD_MS;
-        return item.isLive && isLiveThreshold;
-    }
-
     private boolean isMusicVideo() {
         Video item = getVideo();
         return item.belongsToMusic();
@@ -625,6 +615,33 @@ public class VideoStateController extends BasePlayerController {
 
         if (mGeneralData.isHideWatchedFromNotificationsEnabled()) { // remove any watched length
             MediaServiceManager.instance().hideNotification(video);
+        }
+    }
+
+    private boolean isLiveSpeedThreshold() {
+        if (getPlayer() == null) {
+            return false;
+        }
+
+        Video item = getVideo();
+        boolean isLiveThreshold = getPlayer().getDurationMs() - getPlayer().getPositionMs() < LIVE_SPEED_THRESHOLD_MS;
+        return item.isLive && isLiveThreshold;
+    }
+
+    private long getLiveThreshold() {
+        return getLiveBuffer() + 5_000;
+    }
+
+    private long getLiveBuffer() {
+        return mPlayerTweaksData.isBufferOnStreamsDisabled() ? SHORT_LIVE_BUFFER_MS : LIVE_BUFFER_MS;
+    }
+
+    private void removeFromHistoryIfNeeded() {
+        if (mGeneralData.getHistoryState() == GeneralData.HISTORY_DISABLED) {
+            Video video = getVideo();
+            if (video != null) {
+                mStateService.removeByVideoId(video.videoId);
+            }
         }
     }
 }
